@@ -14,14 +14,31 @@ chat.addEventListener("submit", function (e) {
   chat.elements.text.value = "";
 });
 
-async function postNewMsg(user, text) {
-  // post to /poll a new message
-  // write code here
+function postNewMsg(user, text) {
+  return fetch("/poll", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ user, text }),
+  });
 }
 
-async function getNewMsgs() {
-  // poll the server
-  // write code here
+let lastMessageTime = 0;
+
+function getNewMsgs() {
+  return fetch(`/poll?time=${lastMessageTime}`)
+    .then((res) => {
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status} ${res.statusText}`);
+      }
+      return res.json();
+    })
+    .then((res) => {
+      allChat = res.reverse().concat(allChat);
+      lastMessageTime = allChat[0].time;
+      render();
+    });
 }
 
 function render() {
@@ -37,5 +54,85 @@ function render() {
 const template = (user, msg) =>
   `<li class="collection-item"><span class="badge">${user}</span>${msg}</li>`;
 
-// make the first request
-getNewMsgs();
+/**
+ * @param {() => Promise<unknown>} fn
+ * @param {{ interval?: number, retries?: number, backoff?: number }} param1
+ */
+function poll(fn, { interval, retries, backoff }) {
+  retries ||= 3;
+  backoff ||= interval;
+
+  let nextPoll = 0;
+  let currentRetry = 0;
+  let handle;
+  let lastErr;
+  let resolve, reject;
+
+  const p = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  const pollFn = (time) => {
+    console.log({ time, nextPoll });
+    if (nextPoll > time) {
+      handle = requestAnimationFrame(pollFn);
+      return;
+    }
+
+    try {
+      fn()
+        .then(() => {
+          currentRetry = 0;
+          lastErr = undefined;
+          return false;
+        })
+        .catch((err) => {
+          lastErr = err;
+          currentRetry++;
+          if (currentRetry == retries) {
+            reject(err);
+          } else {
+            return true;
+          }
+        })
+        .then((isError) => {
+          if (typeof isError === "undefined") {
+            return;
+          }
+
+          const duration = performance.now() - time;
+          nextPoll =
+            time +
+            duration +
+            (isError ? backoff * (currentRetry + 1) : interval);
+          handle = requestAnimationFrame(pollFn);
+        });
+    } catch (err) {
+      lastErr = err;
+      reject(err);
+    }
+  };
+
+  return {
+    start() {
+      handle = requestAnimationFrame(pollFn);
+      return p;
+    },
+    stop() {
+      if (!handle) {
+        return;
+      }
+
+      cancelAnimationFrame(handle);
+
+      if (lastErr) {
+        reject(lastErr);
+      } else {
+        resolve();
+      }
+    },
+  };
+}
+
+poll(getNewMsgs, { backoff: 3000 }).start().catch(console.error);

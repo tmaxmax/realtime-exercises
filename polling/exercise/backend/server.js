@@ -1,33 +1,39 @@
 import express from "express";
-import bodyParser from "body-parser";
-import nanobuffer from "nanobuffer";
 import morgan from "morgan";
+import EventEmitter from "events";
 
-// set up a limited array
-const msg = new nanobuffer(50);
-const getMsgs = () => Array.from(msg).reverse();
-
-// feel free to take out, this just seeds the server with at least one message
-msg.push({
-  user: "brian",
-  text: "hi",
-  time: Date.now(),
-});
+const messages = [];
 
 // get express ready to run
 const app = express();
 app.use(morgan("dev"));
-app.use(bodyParser.json());
+app.use(express.json());
 app.use(express.static("frontend"));
 
+const ev = new EventEmitter();
+
 app.get("/poll", function (req, res) {
-  // use getMsgs to get messages to send back
-  // write code here
+  const lastMessageTime = parseInt(req.query.time);
+  let index = messages.length - 1;
+  for (; index >= 0; index--) {
+    if (messages[index].time == lastMessageTime) {
+      break;
+    }
+  }
+
+  if (index == messages.length - 1) {
+    ev.once("message", (m) => res.json([m]));
+  } else {
+    res.json(messages.slice(index + 1));
+  }
 });
 
 app.post("/poll", function (req, res) {
-  // add a new message to the server
-  // write code here
+  const { user, text } = req.body;
+  const message = { user, text, time: Date.now() };
+  messages.push(message);
+  ev.emit("message", message);
+  res.status(204).send();
 });
 
 // start the server
