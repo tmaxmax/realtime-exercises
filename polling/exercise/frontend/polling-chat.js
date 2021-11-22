@@ -74,7 +74,6 @@ function poll(fn, { interval, retries, backoff }) {
   });
 
   const pollFn = (time) => {
-    console.log({ time, nextPoll });
     if (nextPoll > time) {
       handle = requestAnimationFrame(pollFn);
       return;
