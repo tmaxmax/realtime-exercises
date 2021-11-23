@@ -3,18 +3,9 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import handler from "serve-handler";
-import nanobuffer from "nanobuffer";
+import EventEmitter from "events";
 
-let connections = [];
-
-const msg = new nanobuffer(50);
-const getMsgs = () => Array.from(msg).reverse();
-
-msg.push({
-  user: "brian",
-  text: "hi",
-  time: Date.now(),
-});
+const messages = [];
 
 // the two commands you'll have to run in the root directory of the project are
 // (not inside the backend folder)
@@ -29,17 +20,13 @@ const server = http2.createSecureServer({
   key: fs.readFileSync(path.join(__dirname, "/../key.pem")),
 });
 
-/*
- *
- * Code goes here
- *
- */
+const newMessages = new EventEmitter();
 
 server.on("request", async (req, res) => {
-  const path = req.headers[":path"];
+  const url = new URL(req.headers[":path"], "https://example.com");
   const method = req.headers[":method"];
 
-  if (path !== "/msgs") {
+  if (url.pathname !== "/msgs") {
     // handle the static assets
     return handler(req, res, {
       public: "./frontend",
@@ -50,15 +37,49 @@ server.on("request", async (req, res) => {
     for await (const chunk of req) {
       buffers.push(chunk);
     }
+
     const data = Buffer.concat(buffers).toString();
     const { user, text } = JSON.parse(data);
+    const message = { user, text, time: Date.now() };
 
-    /*
-     *
-     * some code goes here
-     *
-     */
+    res.end();
+
+    messages.push(message);
+    newMessages.emit("message", message);
   }
+});
+
+server.on("stream", (stream, headers) => {
+  const url = new URL(headers[":path"], "https://example.com");
+  const method = headers[":method"];
+
+  if (url.pathname !== "/msgs" || method !== "GET") {
+    console.log(pathname + " not messages, exit...");
+    return;
+  }
+
+  stream.respond({
+    ":status": 200,
+    "content-type": "text/plain; charset=utf-8",
+  });
+
+  const lastSeen = parseInt(url.searchParams.get("time"));
+
+  let i = messages.length - 1;
+  for (; i >= 0; i--) {
+    if (messages[i].time === lastSeen) {
+      break;
+    }
+  }
+
+  if (i !== messages.length - 1) {
+    stream.write(JSON.stringify(messages.slice(i + 1)));
+  }
+
+  const newMessagesHandler = (m) => stream.write(JSON.stringify([m]));
+
+  newMessages.on("message", newMessagesHandler);
+  stream.on("close", () => newMessages.off("message", newMessagesHandler));
 });
 
 // start listening
